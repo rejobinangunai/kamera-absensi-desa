@@ -1,0 +1,843 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Kamera Absensi Desa Rejo Binangun</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: #f4f7f4;
+        color: #203e2f;
+        font: 14px/1.6 system-ui;
+      }
+      main {
+        max-width: 600px;
+        margin: 24px auto;
+        padding: 0 18px;
+      }
+      header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 18px;
+      }
+      header b {
+        font-size: 14px;
+      }
+      header span {
+        font-size: 10px;
+        background: #e2f0e7;
+        border-radius: 99px;
+        padding: 5px 9px;
+      }
+      h1 {
+        font-size: 24px;
+        margin: 0 0 6px;
+      }
+      p {
+        font-size: 12px;
+        color: #75887b;
+        margin: 0 0 18px;
+      }
+      .camera {
+        height: 360px;
+        background: #153126;
+        border-radius: 15px;
+        overflow: hidden;
+        position: relative;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      canvas {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+        transform: scaleX(-1);
+      }
+      #instruction {
+        position: absolute;
+        bottom: 14px;
+        left: 14px;
+        right: 14px;
+        background: #173e2de8;
+        border-radius: 9px;
+        color: white;
+        padding: 10px;
+        font-size: 12px;
+        text-align: center;
+      }
+      #status {
+        padding: 14px 0;
+        min-height: 65px;
+        font-size: 12px;
+        color: #617a68;
+      }
+      .controls {
+        display: flex;
+        gap: 10px;
+      }
+      button {
+        border: 0;
+        padding: 13px 16px;
+        border-radius: 10px;
+        font: 700 13px system-ui;
+        cursor: pointer;
+        background: #17594a;
+        color: white;
+        flex: 1;
+      }
+      button.secondary {
+        background: #e5eee7;
+        color: #17594a;
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+      .info {
+        background: white;
+        border: 1px solid #e1e9e2;
+        padding: 14px;
+        border-radius: 11px;
+        margin: 15px 0;
+        color: #76887b;
+        font-size: 11px;
+      }
+      label {
+        display: flex;
+        gap: 8px;
+        font-size: 11px;
+        color: #647b6a;
+        margin: 15px 0;
+      }
+      input {
+        accent-color: #17594a;
+      }
+      .bar {
+        display: flex;
+        gap: 5px;
+        margin-top: 12px;
+      }
+      .bar span {
+        height: 5px;
+        flex: 1;
+        background: #dce8df;
+        border-radius: 4px;
+      }
+      .bar span.done {
+        background: #2d906b;
+      }
+      .hidden {
+        display: none !important;
+      }
+      @media (max-width: 450px) {
+        main {
+          margin: 16px auto;
+        }
+        .camera {
+          height: 300px;
+        }
+        h1 {
+          font-size: 21px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header><b>ABSENSI DESA REJO BINANGUN</b><span>Pemrosesan di perangkat</span></header>
+      <h1 id="title">Menghubungkan kamera</h1>
+      <p id="subtitle">Buka halaman ini melalui aplikasi absensi.</p>
+      <div class="camera" id="cameraBox">
+        <canvas id="cameraPreview"></canvas>
+        <div id="instruction">Menunggu sesi dari aplikasi…</div>
+      </div>
+      <div id="progress" class="bar"></div>
+      <div id="status">Belum terhubung dengan aplikasi absensi.</div>
+      <label
+        ><input id="consent" type="checkbox" /><span id="consentText"
+          >Saya menyetujui pemrosesan wajah dan lokasi untuk kehadiran. Hasil dikirim ke aplikasi
+          kantor yang membuka jendela ini.</span
+        ></label
+      >
+      <div class="controls">
+        <button id="startBtn" disabled>Mulai pemeriksaan</button
+        ><button id="closeBtn" class="secondary">Batal</button>
+      </div>
+      <div class="info">
+        Model dimuat dari hosting kamera ini dan berjalan di browser. Tidak ada panggilan API AI untuk mengirim
+        foto ke penyedia model. Foto dan hasil pemindaian dikembalikan ke aplikasi absensi, lalu
+        disimpan di Google Drive/Sheets.
+      </div>
+    </main>
+    <script
+      src="./assets/human.js"
+      crossorigin="anonymous"
+      integrity="sha384-vASLsXJSh9FIgw41jM2fwBSF2MoEPlegwV4SO9G3NeyRMcWf7XjSdYvU6MlwOfQl"
+    ></script>
+    <script>
+      /* Client model adapter + temporal challenge state machine. No external inference API. */
+      const FaceCore = (() => {
+        const MODEL = 'human-3.3.6-faceres';
+        const median = (a) => {
+          const s = a.slice().sort((x, y) => x - y),
+            i = Math.floor(s.length / 2);
+          return s.length % 2 ? s[i] : (s[i - 1] + s[i]) / 2;
+        };
+        function similarity(a, b) {
+          if (!Array.isArray(a) || !Array.isArray(b) || a.length !== 1024 || b.length !== 1024)
+            return 0;
+          let sum = 0;
+          for (let i = 0; i < a.length; i++) sum += (a[i] - b[i]) ** 2;
+          const d = Math.round(2500 * sum) / 100;
+          return d === 0
+            ? 1
+            : Math.round(100 * Math.max(0, Math.min(1, (1 - Math.sqrt(d) / 100 - 0.2) / 0.6))) /
+                100;
+        }
+        const labels = {
+          center: 'Tatap kamera dengan wajah lurus',
+          blink: 'Pejamkan kedua mata sebentar, lalu buka kembali',
+          left: 'Putar kepala perlahan ke kiri Anda',
+          right: 'Putar kepala perlahan ke kanan Anda',
+        };
+        function eyeRatio(mesh, ids) {
+          const p = ids.map((i) => mesh[i]);
+          if (p.some((v) => !v)) return NaN;
+          const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+          return (dist(p[1], p[5]) + dist(p[2], p[4])) / (2 * dist(p[0], p[3]));
+        }
+        class Session {
+          constructor(challenge, start) {
+            this.challenge = challenge;
+            this.start = start;
+            this.index = 0;
+            this.hold = null;
+            this.closed = null;
+            this.openSeen = false;
+            this.baseline = null;
+            this.eyeBase = [];
+            this.samples = [];
+            this.events = [];
+            this.real = [];
+            this.live = [];
+            this.snapshots = [];
+            this.lastValid = start;
+            this.done = false;
+          }
+          get step() {
+            return this.challenge.steps[this.index];
+          }
+          push(f, now) {
+            if (this.done) return { done: true };
+            if (now - this.start > 110000) throw new Error('Waktu pemindaian habis. Ulangi.');
+            if (f.count > 1)
+              throw new Error('Lebih dari satu wajah terlihat. Gunakan kamera untuk satu pegawai.');
+            if (
+              f.count !== 1 ||
+              !Number.isFinite(f.faceScore) ||
+              f.faceScore < 0.7 ||
+              f.size < 140 ||
+              !Array.isArray(f.embedding) ||
+              f.embedding.length !== 1024 ||
+              f.embedding.some((v) => !Number.isFinite(v)) ||
+              !Number.isFinite(f.real) ||
+              !Number.isFinite(f.live) ||
+              !Number.isFinite(f.ear) ||
+              f.ear <= 0
+            ) {
+              this.hold = null;
+              this.closed = null;
+              this.openSeen = false;
+              if (this.baseline && now - this.lastValid > 2000)
+                throw new Error('Wajah hilang dari kamera. Pindai ulang.');
+              return {
+                hint:
+                  f.count === 0
+                    ? 'Posisikan satu wajah di tengah kamera'
+                    : 'Dekatkan wajah dan perbaiki pencahayaan',
+                progress: this.index,
+              };
+            }
+            this.lastValid = now;
+            if (this.baseline && similarity(f.embedding, this.baseline) < 0.5)
+              throw new Error('Wajah berganti selama pemindaian. Ulangi.');
+            if (this.real.length < 600) {
+              this.real.push(f.real);
+              this.live.push(f.live);
+            }
+            const centered = f.facing === 'center';
+            if (this.index === 0 && centered && f.ear > 0.14) {
+              this.eyeBase.push(f.ear);
+              if (this.eyeBase.length > 15) this.eyeBase.shift();
+            }
+            const base = this.eyeBase.length ? median(this.eyeBase) : 0.25;
+            let complete = false,
+              duration = 0,
+              ratio = 1;
+            if (this.step === 'blink') {
+              const open = centered && f.ear > base * 0.85;
+              if (open && !this.closed) this.openSeen = true;
+              if (centered && this.openSeen && f.ear < base * 0.65) {
+                if (this.closed === null) {
+                  this.closed = now;
+                  this.closedRatio = f.ear / base;
+                } else this.closedRatio = Math.min(this.closedRatio, f.ear / base);
+              }
+              if (this.closed !== null && now - this.closed > 2500) {
+                this.closed = null;
+                this.openSeen = false;
+              }
+              if (open && this.closed !== null) {
+                duration = now - this.closed;
+                ratio = this.closedRatio;
+                complete = duration >= 80 && duration <= 2500;
+                this.closed = null;
+                this.openSeen = true;
+              }
+            } else {
+              const valid =
+                f.facing === this.step && (this.step !== 'center' || f.ear > base * 0.8);
+              if (!valid) this.hold = null;
+              else if (this.hold === null) this.hold = now;
+              duration = this.hold === null ? 0 : now - this.hold;
+              complete = duration >= (this.step === 'center' ? 1000 : 650);
+              if (
+                this.index === this.challenge.steps.length - 1 &&
+                (now - this.start < 3200 || this.real.length < 8)
+              )
+                complete = false;
+            }
+            if (complete) {
+              if (this.step === 'center' || this.step === 'blink') {
+                if (this.baseline && similarity(f.embedding, this.baseline) < 0.6)
+                  throw new Error('Sampel wajah tidak konsisten. Pindai ulang.');
+                this.samples.push(f.embedding.slice());
+                if (!this.baseline) this.baseline = f.embedding.slice();
+              }
+              const event = {
+                step: this.step,
+                t: Math.round(now - this.start),
+                duration: Math.round(duration),
+              };
+              if (this.step === 'blink') event.eyeRatio = ratio;
+              this.events.push(event);
+              this.snapshots.push({ step: this.step, t: event.t });
+              this.index++;
+              this.hold = null;
+              this.closed = null;
+              this.openSeen = false;
+              if (this.index === this.challenge.steps.length) {
+                if (
+                  this.samples.length !== 3 ||
+                  this.real.length < 8 ||
+                  median(this.real) < 0.65 ||
+                  median(this.live) < 0.65
+                )
+                  throw new Error(
+                    'Skor anti-spoof/liveness belum lolos. Hindari layar atau foto dan perbaiki cahaya.',
+                  );
+                this.done = true;
+                return { done: true, event, progress: this.index };
+              }
+              return { event, progress: this.index, hint: labels[this.step] };
+            }
+            return { hint: labels[this.step], progress: this.index, real: f.real, live: f.live };
+          }
+          proof(now) {
+            return {
+              events: this.events,
+              durationMs: Math.round(now - this.start),
+              real: this.real.map((x) => Math.round(x * 10000) / 10000),
+              live: this.live.map((x) => Math.round(x * 10000) / 10000),
+            };
+          }
+        }
+        return { MODEL, median, similarity, eyeRatio, labels, Session };
+      })();
+      class BrowserFaceEngine {
+        constructor(preview, onStatus) {
+          this.preview = preview;
+          this.onStatus = onStatus;
+          this.video = document.createElement('video');
+          this.video.autoplay = true;
+          this.video.playsInline = true;
+          this.video.muted = true;
+          this.stream = null;
+          this.model = null;
+          this.running = false;
+          this.cancelled = false;
+          this.frame = document.createElement('canvas');
+        }
+        async init() {
+          if (!navigator.mediaDevices?.getUserMedia)
+            throw new Error(
+              'Browser belum mendukung kamera. Buka URL /exec di Chrome atau Edge terbaru.',
+            );
+          if (!this.stream) {
+            this.stream = await navigator.mediaDevices.getUserMedia({
+              video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
+              audio: false,
+            });
+            this.video.srcObject = this.stream;
+            await this.video.play();
+            if (this.video.readyState < 2)
+              await new Promise((resolve, reject) => {
+                const timer = setTimeout(() => reject(new Error('Kamera belum siap.')), 15000);
+                this.video.onloadeddata = () => {
+                  clearTimeout(timer);
+                  resolve();
+                };
+              });
+          }
+          this.frame.width = this.video.videoWidth;
+          this.frame.height = this.video.videoHeight;
+          this.preview.width = this.frame.width;
+          this.preview.height = this.frame.height;
+          if (!this.model) {
+            if (!window.Human?.Human)
+              throw new Error('Pustaka model gagal dimuat. Periksa folder assets dan koneksi ke hosting kamera.');
+            this.onStatus('Mengunduh model wajah untuk diproses di perangkat…');
+            const probe = document.createElement('canvas');
+            let graphics = null;
+            try { graphics = probe.getContext('webgl2') || probe.getContext('webgl'); } catch (ignore) {}
+            const backend = graphics ? 'webgl' : 'wasm';
+            graphics?.getExtension('WEBGL_lose_context')?.loseContext();
+            const settings = {
+              backend,
+              wasmPath: './assets/',
+              modelBasePath: './models/',
+              debug: false,
+              async: false,
+              cacheSensitivity: 0,
+              skipAllowed: false,
+              filter: { enabled: true, equalization: false },
+              face: {
+                enabled: true,
+                detector: {
+                  rotation: true,
+                  maxDetected: 3,
+                  return: false,
+                  skipFrames: 0,
+                  skipTime: 0,
+                  minConfidence: 0.6,
+                },
+                mesh: { enabled: true },
+                attention: { enabled: false },
+                iris: { enabled: false },
+                description: { enabled: true, skipFrames: 0, skipTime: 0 },
+                emotion: { enabled: false },
+                antispoof: { enabled: true, skipFrames: 0, skipTime: 0 },
+                liveness: { enabled: true, skipFrames: 0, skipTime: 0 },
+              },
+              body: { enabled: false },
+              hand: { enabled: false },
+              object: { enabled: false },
+              segmentation: { enabled: false },
+              gesture: { enabled: true },
+            };
+            const required = ['blazeface', 'facemesh', 'faceres', 'antispoof', 'liveness'];
+            const load = async () => {
+              this.model = new Human.Human(settings);
+              await this.model.load();
+              const loaded = this.model.models.loaded();
+              if (required.some((name) => !loaded.includes(name)))
+                throw new Error('Model wajah belum lengkap. Periksa koneksi dan berkas model pada hosting.');
+            };
+            try { await load(); }
+            catch (error) {
+              this.model?.models.reset();
+              this.model = null;
+              if (backend === 'wasm') throw error;
+              this.onStatus('Menyiapkan model yang kompatibel dengan perangkat ini…');
+              settings.backend = 'wasm';
+              try { await load(); }
+              catch (fallbackError) { this.model = null; throw fallbackError; }
+            }
+          }
+        }
+        photo(canvas = this.frame) {
+          const out = document.createElement('canvas'),
+            scale = Math.min(1, 640 / canvas.width);
+          out.width = Math.round(canvas.width * scale);
+          out.height = Math.round(canvas.height * scale);
+          out.getContext('2d').drawImage(canvas, 0, 0, out.width, out.height);
+          return { mime: 'image/jpeg', base64: out.toDataURL('image/jpeg', 0.78).split(',')[1] };
+        }
+        stop() {
+          this.cancelled = true;
+          this.stream?.getTracks().forEach((t) => t.stop());
+          this.stream = null;
+          this.video.srcObject = null;
+        }
+        cancel() {
+          this.cancelled = true;
+        }
+        async scan(challenge, onProgress) {
+          if (this.running) throw new Error('Pemindaian masih berjalan.');
+          this.running = true;
+          this.cancelled = false;
+          const session = new FaceCore.Session(challenge, performance.now()),
+            snapshots = [];
+          try {
+            while (!session.done) {
+              if (this.cancelled) throw new Error('Pemindaian dibatalkan.');
+              if (Date.now() > challenge.expires)
+                throw new Error('Tantangan kedaluwarsa. Pindai ulang.');
+              this.frame
+                .getContext('2d')
+                .drawImage(this.video, 0, 0, this.frame.width, this.frame.height);
+              const result = await this.model.detect(this.frame),
+                face = result.face[0];
+              const gestures = (result.gesture || [])
+                .filter((g) => g.face === 0)
+                .map((g) => g.gesture);
+              const facing = gestures.includes('facing center')
+                ? 'center'
+                : gestures.includes('facing left')
+                  ? 'left'
+                  : gestures.includes('facing right')
+                    ? 'right'
+                    : '';
+              const ear =
+                face?.mesh?.length > 450
+                  ? (FaceCore.eyeRatio(face.mesh, [33, 160, 158, 133, 153, 144]) +
+                      FaceCore.eyeRatio(face.mesh, [362, 385, 387, 263, 373, 380])) /
+                    2
+                  : NaN;
+              const frame = {
+                count: result.face.length,
+                faceScore: face?.faceScore || face?.boxScore || 0,
+                size: face ? Math.min(face.box[2], face.box[3]) : 0,
+                embedding: face?.embedding,
+                real: face?.real,
+                live: face?.live,
+                ear,
+                facing,
+              };
+              const update = session.push(frame, performance.now()),
+                ctx = this.preview.getContext('2d');
+              ctx.drawImage(this.frame, 0, 0);
+              if (face) {
+                ctx.lineWidth = 3;
+                ctx.strokeStyle = update.done ? '#64dc9b' : '#ffffff';
+                ctx.strokeRect(...face.box);
+              }
+              if (update.event) {
+                const copy = document.createElement('canvas');
+                copy.width = 320;
+                copy.height = 240;
+                copy.getContext('2d').drawImage(this.frame, 0, 0, 320, 240);
+                snapshots.push({ canvas: copy, event: update.event });
+              }
+              onProgress({ ...update, steps: challenge.steps.length });
+              if (!session.done) await new Promise((resolve) => setTimeout(resolve, 35));
+            }
+            const evidence = document.createElement('canvas');
+            evidence.width = 640;
+            evidence.height = 536;
+            const ctx = evidence.getContext('2d');
+            ctx.fillStyle = '#132f25';
+            ctx.fillRect(0, 0, 640, 536);
+            snapshots.forEach((x, i) => {
+              const col = i % 2,
+                row = Math.floor(i / 2),
+                y = row * 268;
+              ctx.drawImage(x.canvas, col * 320, y, 320, 240);
+              ctx.fillStyle = 'white';
+              ctx.font = '13px sans-serif';
+              ctx.fillText(
+                i + 1 + '. ' + x.event.step + ' · ' + x.event.t + ' ms',
+                col * 320 + 9,
+                y + 259,
+              );
+            });
+            return {
+              challengeId: challenge.id,
+              purpose: challenge.purpose,
+              model: FaceCore.MODEL,
+              samples: session.samples,
+              proof: session.proof(performance.now()),
+              image: this.photo(),
+              evidence: this.photo(evidence),
+            };
+          } finally {
+            this.running = false;
+          }
+        }
+      }
+    </script>
+
+    <script>
+      const bridgeSession = new URLSearchParams(location.hash.slice(1)).get('session');
+      let parentOrigin = null,
+        request = null,
+        challengeWaiter = null,
+        engine = null,
+        working = false,
+        testing = false,
+        previewFrame = null;
+      const standalone = !window.opener || !bridgeSession;
+      const el = (id) => document.getElementById(id);
+      function allowedParent(origin) {
+        try {
+          const h = new URL(origin).hostname;
+          return (
+            (/^https:\/\//.test(origin) &&
+              (h === 'script.google.com' ||
+                h === 'script.googleusercontent.com' ||
+                h.endsWith('-script.googleusercontent.com'))) ||
+            (['127.0.0.1', 'localhost'].includes(location.hostname) &&
+              ['127.0.0.1', 'localhost'].includes(h))
+          );
+        } catch (e) {
+          return false;
+        }
+      }
+      function send(type, data = {}) {
+        if (parentOrigin && window.opener)
+          window.opener.postMessage({ type, session: bridgeSession, ...data }, parentOrigin);
+      }
+      const ready = setInterval(() => {
+        if (window.opener && bridgeSession)
+          window.opener.postMessage({ type: 'DESA_CAMERA_READY', session: bridgeSession }, '*');
+      }, 400);
+      window.addEventListener('message', (event) => {
+        if (
+          !bridgeSession ||
+          event.source !== window.opener ||
+          !allowedParent(event.origin) ||
+          event.data?.session !== bridgeSession
+        )
+          return;
+        const data = event.data;
+        if (data.type === 'DESA_CAMERA_CHALLENGE') {
+          const ch = data.challenge;
+          if (event.origin === parentOrigin && challengeWaiter && ch?.id &&
+              ch.purpose === request?.purpose && Array.isArray(ch.steps) &&
+              ch.model === FaceCore.MODEL && ch.expires > Date.now()) {
+            challengeWaiter.resolve(ch);
+          }
+          return;
+        }
+        if (data.type !== 'DESA_CAMERA_START' || request) return;
+        if (
+          !['scan', 'gps'].includes(data.mode) ||
+          (data.mode === 'scan' && !['in', 'out', 'enroll'].includes(data.purpose || data.challenge?.purpose))
+        )
+          return;
+        parentOrigin = event.origin;
+        request = { ...data, purpose: data.purpose || data.challenge?.purpose };
+        clearInterval(ready);
+        el('startBtn').disabled = false;
+        el('title').textContent =
+          data.mode === 'gps'
+            ? 'Periksa lokasi GPS'
+            : request.purpose === 'enroll'
+              ? 'Daftarkan wajah pegawai'
+              : 'Verifikasi wajah untuk absensi';
+        el('subtitle').textContent = 'Sesi terhubung. Izinkan akses kamera/lokasi ketika diminta.';
+        el('status').textContent = 'Tekan mulai untuk melanjutkan.';
+        if (data.mode === 'gps') {
+          el('cameraBox').classList.add('hidden');
+          el('startBtn').textContent = 'Baca lokasi sekarang';
+        } else el('instruction').textContent = 'Wajah akan dipindai setelah Anda menekan mulai.';
+      });
+      function freshChallenge() {
+        if (request.challenge) return Promise.resolve(request.challenge);
+        return new Promise((resolve, reject) => {
+          const timer = setTimeout(() => {
+            challengeWaiter = null;
+            reject(new Error('Aplikasi belum mengirim tantangan. Kembali ke aplikasi dan pindai ulang.'));
+          }, 30000);
+          challengeWaiter = { resolve: (challenge) => {
+            clearTimeout(timer);
+            challengeWaiter = null;
+            request.challenge = challenge;
+            resolve(challenge);
+          }};
+          send('DESA_CAMERA_PREPARED');
+        });
+      }
+      function gps() {
+        return new Promise((resolve, reject) => {
+          if (!navigator.geolocation) return reject(new Error('Perangkat tidak mendukung GPS.'));
+          let best = null, watch = null, complete = false;
+          const finish = (error) => {
+            if (complete) return;
+            complete = true;
+            clearTimeout(timer);
+            if (watch !== null) navigator.geolocation.clearWatch(watch);
+            if (best) resolve(best);
+            else reject(error || new Error('GPS belum memperoleh lokasi. Buka di tempat lebih terbuka.'));
+          };
+          const timer = setTimeout(() => finish(), 18000);
+          watch = navigator.geolocation.watchPosition((p) => {
+            if (complete) return;
+            const value = { lat: p.coords.latitude, lng: p.coords.longitude,
+              accuracy: p.coords.accuracy, timestamp: p.timestamp };
+            if (!best || value.accuracy < best.accuracy) best = value;
+            if (best.accuracy <= 8) finish();
+          }, (e) => finish(new Error(e.code === 1
+            ? 'Izin lokasi ditolak. Izinkan Lokasi pada pengaturan situs browser.'
+            : 'Lokasi belum terbaca. Aktifkan GPS dan coba di tempat terbuka.')),
+          { enableHighAccuracy: true, timeout: 18000, maximumAge: 0 });
+        });
+      }
+      el('startBtn').onclick = async () => {
+        if (working) return;
+        if (standalone && !request) {
+          await testCamera();
+          return;
+        }
+        if (!request) return;
+        if (!el('consent').checked) {
+          el('status').textContent = 'Pilih persetujuan pemrosesan sebelum melanjutkan.';
+          return;
+        }
+        working = true;
+        el('startBtn').disabled = true;
+        try {
+          let result;
+          if (request.mode === 'gps') {
+            el('status').textContent = 'Membaca GPS…';
+            result = { gps: await gps() };
+          } else {
+            engine = new BrowserFaceEngine(
+              el('cameraPreview'),
+              (s) => (el('status').textContent = s),
+            );
+            await engine.init();
+            el('status').textContent = 'Kamera dan model siap. Meminta tantangan baru…';
+            const challenge = await freshChallenge();
+            const locationResult =
+              request.purpose === 'enroll'
+                ? Promise.resolve(null)
+                : gps().catch(() => null);
+            result = await engine.scan(challenge, (u) => {
+              el('instruction').textContent = u.hint || 'Tantangan selesai';
+              el('status').textContent = u.done
+                ? 'Liveness selesai. Mengembalikan hasil ke aplikasi…'
+                : u.hint || 'Memeriksa wajah…';
+              el('progress').innerHTML = Array.from(
+                { length: u.steps },
+                (_, i) => '<span class="' + (i < u.progress ? 'done' : '') + '"></span>',
+              ).join('');
+              send('DESA_CAMERA_PROGRESS', {
+                progress: { hint: u.hint, progress: u.progress, steps: u.steps, done: !!u.done },
+              });
+            });
+            result.gps = await locationResult;
+          }
+          engine?.stop();
+          el('status').textContent = 'Hasil dikirim. Anda dapat kembali ke aplikasi absensi.';
+          send('DESA_CAMERA_RESULT', { result });
+        } catch (e) {
+          engine?.stop();
+          el('status').textContent = cameraError(e);
+          send('DESA_CAMERA_ERROR', { message: cameraError(e) });
+        } finally {
+          working = false;
+        }
+      };
+      el('closeBtn').onclick = () => {
+        if (standalone) {
+          stopTest();
+          el('status').textContent =
+            'Uji kamera dihentikan. Untuk absensi, buka aplikasi Google Apps Script.';
+          return;
+        }
+        engine?.cancel();
+        engine?.stop();
+        send('DESA_CAMERA_ERROR', { message: 'Sesi kamera dibatalkan.' });
+        window.close();
+      };
+      window.addEventListener('beforeunload', () => engine?.stop());
+      function stopTest() {
+        testing = false;
+        if (previewFrame) cancelAnimationFrame(previewFrame);
+        engine?.stop();
+        el('startBtn').textContent = 'Uji kamera & model';
+        el('startBtn').disabled = false;
+      }
+      function cameraError(e) {
+        const hints = {
+          NotAllowedError:
+            'Izin kamera ditolak. Izinkan Kamera pada pengaturan situs browser lalu muat ulang.',
+          NotFoundError: 'Tidak ditemukan kamera yang cocok pada perangkat ini.',
+          NotReadableError:
+            'Kamera tidak dapat dibaca. Tutup aplikasi lain yang memakai kamera lalu coba lagi.',
+          SecurityError:
+            'Kebijakan browser atau halaman memblokir kamera. Buka halaman HTTPS langsung di Chrome.',
+        };
+        return (e.name || 'Error') + ': ' + (hints[e.name] || e.message || String(e));
+      }
+      async function testCamera() {
+        if (testing) {
+          stopTest();
+          el('status').textContent =
+            'Uji kamera selesai. Salin alamat halaman ini ke Pengaturan kantor pada aplikasi absensi.';
+          return;
+        }
+        if (!el('consent').checked) {
+          el('status').textContent = 'Pilih persetujuan uji kamera terlebih dahulu.';
+          return;
+        }
+        working = true;
+        el('startBtn').disabled = true;
+        try {
+          engine = new BrowserFaceEngine(
+            el('cameraPreview'),
+            (text) => (el('status').textContent = text),
+          );
+          await engine.init();
+          testing = true;
+          const draw = () => {
+            if (!testing || !engine?.stream) return;
+            const canvas = el('cameraPreview');
+            canvas.getContext('2d').drawImage(engine.video, 0, 0, canvas.width, canvas.height);
+            previewFrame = requestAnimationFrame(draw);
+          };
+          draw();
+          el('instruction').textContent = 'Kamera aktif — mode uji';
+          el('status').textContent =
+            'BERHASIL: kamera dapat diakses dan file model selesai dimuat. Uji ini tidak menyimpan atau mengirim foto. Untuk daftar wajah/absen, buka melalui aplikasi Google Apps Script.';
+          el('startBtn').textContent = 'Hentikan uji kamera';
+        } catch (e) {
+          const cameraOpened = !!engine?.stream;
+          stopTest();
+          el('status').textContent =
+            (cameraOpened ? 'Kamera berhasil dibuka, tetapi pemuatan model gagal. ' : '') +
+            cameraError(e);
+        } finally {
+          working = false;
+          el('startBtn').disabled = false;
+        }
+      }
+      if (standalone) {
+        clearInterval(ready);
+        el('title').textContent = 'Halaman kamera berhasil dipasang';
+        el('subtitle').textContent =
+          'Anda dapat menguji kamera di sini. Pendaftaran wajah dan absensi tetap dimulai dari aplikasi kantor.';
+        el('instruction').textContent = 'Tekan Uji kamera & model';
+        el('status').textContent =
+          'Hosting aktif. Pilih persetujuan lalu tekan tombol uji. Pesan tidak ada sesi pada versi sebelumnya berarti halaman dibuka langsung.';
+        el('consentText').textContent =
+          'Saya mengizinkan uji kamera di perangkat ini. Tidak ada foto uji yang disimpan atau dikirim.';
+        el('startBtn').textContent = 'Uji kamera & model';
+        el('startBtn').disabled = false;
+        el('closeBtn').textContent = 'Hentikan';
+      } else
+        setTimeout(() => {
+          if (!request)
+            el('status').textContent =
+              'Sesi belum diterima dari aplikasi. Periksa URL kamera, izin popup, dan buka kembali dari tombol Daftarkan wajah atau Pindai pada aplikasi.';
+        }, 15000);
+    </script>
+  </body>
+</html>

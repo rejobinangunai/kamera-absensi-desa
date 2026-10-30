@@ -1,0 +1,6 @@
+Human 3.3.6: Copyright Vladimir Mandic, MIT License, lihat LICENSE_HUMAN.txt.
+TensorFlow.js dan runtime WASM: Copyright Google LLC, Apache License 2.0.
+Bobot model merupakan berkas resmi yang didistribusikan bersama Human 3.3.6, tanpa perubahan. Metadata konversi/provenance dipertahankan di setiap JSON model.
+Sumber dan dokumentasi: https://github.com/vladmandic/human/wiki/Models
+Paket asli: https://www.npmjs.com/package/@vladmandic/human/v/3.3.6
+Tidak berisi database pegawai atau template hasil pendaftaran.

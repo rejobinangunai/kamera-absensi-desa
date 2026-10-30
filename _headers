@@ -1,0 +1,4 @@
+/*
+  Permissions-Policy: camera=(self), geolocation=(self), microphone=()
+  Cross-Origin-Opener-Policy: unsafe-none
+  X-Content-Type-Options: nosniff
